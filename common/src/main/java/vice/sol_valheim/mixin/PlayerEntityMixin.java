@@ -29,25 +29,36 @@ import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 @Mixin({Player.class})
-public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEntityMixinDataAccessor
-{
-    @Unique
-    private static final EntityDataAccessor<ValheimFoodData> sol_valheim$DATA_ACCESSOR = SynchedEntityData.defineId(Player.class, ValheimFoodData.FOOD_DATA_SERIALIZER);
+public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEntityMixinDataAccessor {
 
-    @Shadow
-    protected FoodData foodData;
-
-    @Override
+    // --- 補回這一段，這是 DataTracker 的核心 ---
     @Unique
-    public ValheimFoodData sol_valheim$getFoodData() {
-        var player = (Player) (LivingEntity)this;
-        return player.getEntityData().get(sol_valheim$DATA_ACCESSOR);
-    }
+    private static final EntityDataAccessor<ValheimFoodData> sol_valheim$DATA_ACCESSOR = 
+        SynchedEntityData.defineId(Player.class, ValheimFoodData.FOOD_DATA_SERIALIZER);
+    // ------------------------------------------
 
     @Unique
     private ValheimFoodData sol_valheim$food_data = new ValheimFoodData();
 
-    protected PlayerEntityMixin(EntityType<? extends LivingEntity> entityType, Level level) { super(entityType, level); }
+    @Shadow
+    protected FoodData foodData;
+
+    protected PlayerEntityMixin(EntityType<? extends LivingEntity> entityType, Level level) { 
+        super(entityType, level); 
+    }
+
+    // 正確實作介面中的同步方法
+    @Override
+    public void sol_valheim$refreshFoodData() {
+        this.sol_valheim$trackData(); 
+    }
+
+    // 實作獲取數據的方法
+    @Override
+    @Unique
+    public ValheimFoodData sol_valheim$getFoodData() {
+        return this.entityData.get(sol_valheim$DATA_ACCESSOR);
+    }
 
     @Inject(at = {@At("HEAD")}, method = {"causeFoodExhaustion(F)V"}, cancellable = true)
     private void onAddExhaustion(float exhaustion, CallbackInfo info) {
@@ -56,8 +67,8 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
 
     @Inject(at = {@At("HEAD")}, method = {"getFoodData"})
     private void onGetFoodData(CallbackInfoReturnable<FoodData> cir) {
-        // hack workaround for player data not being accessible in FoodData
-        ((FoodDataPlayerAccessor) foodData).sol_valheim$setPlayer((Player) (LivingEntity) this);
+        // 確保 FoodData 知道它是屬於哪個 Player 的
+        ((FoodDataPlayerAccessor) foodData).sol_valheim$setPlayer((Player) (Object) this);
     }
 
     @Inject(at = {@At("HEAD")}, method = {"eat(Lnet/minecraft/world/level/Level;Lnet/minecraft/world/item/ItemStack;)Lnet/minecraft/world/item/ItemStack;"})
@@ -85,8 +96,7 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
         var level = this.level();
         #endif
 
-        if (level.isClientSide)
-            return;
+        if (level.isClientSide) return;
 
         if (isDeadOrDying()) {
             sol_valheim$food_data.clear();
@@ -100,33 +110,23 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
 
             var player = (Player) (Object) this;
             if (player.tickCount % 20 == 0) {
-                // Handle main eaten items
                 for (var eaten : sol_valheim$food_data.ItemEntries) {
                     var config = ModConfig.getFoodConfig(eaten.item);
-                    if (config != null) {
-                        sol_valheim$applyFoodEffectsToPlayer(player, eaten, config);
-                    }
+                    if (config != null) sol_valheim$applyFoodEffectsToPlayer(player, eaten, config);
                 }
-                // Handle drink slot
                 if (sol_valheim$food_data.DrinkSlot != null) {
                     var config = ModConfig.getFoodConfig(sol_valheim$food_data.DrinkSlot.item);
-                    if (config != null) {
-                        sol_valheim$applyFoodEffectsToPlayer(player, sol_valheim$food_data.DrinkSlot, config);
-                    }
+                    if (config != null) sol_valheim$applyFoodEffectsToPlayer(player, sol_valheim$food_data.DrinkSlot, config);
                 }
             }
         }
 
         float maxhp = Math.min(SOLValheim.Config.common.maxFoodHealth * 2, (SOLValheim.Config.common.startingHealth * 2) + sol_valheim$food_data.getTotalFoodNutrition());
-        // hack: round to full hearts
         maxhp = Math.round(maxhp / 2) * 2;
 
-        Player player = (Player) (LivingEntity) this;
+        Player player = (Player) (Object) this;
         player.getFoodData().setSaturation(0);
-
         player.getAttribute(Attributes.MAX_HEALTH).setBaseValue(maxhp);
-        //if (getHealth() > maxhp)
-        //    setHealth(maxhp);
 
         if (SOLValheim.Config.common.speedBoost > 0.01f) {
             var attr = player.getAttribute(Attributes.MOVEMENT_SPEED);
@@ -138,41 +138,25 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
         }
 
         var timeSinceHurt = level.getGameTime() - ((LivingEntityDamageAccessor) this).getLastDamageStamp();
-        if (timeSinceHurt > SOLValheim.Config.common.regenDelay && player.tickCount % (5 * SOLValheim.Config.common.regenSpeedModifier) == 0)
-        {
+        if (timeSinceHurt > SOLValheim.Config.common.regenDelay && player.tickCount % (5 * SOLValheim.Config.common.regenSpeedModifier) == 0) {
             player.heal(sol_valheim$food_data.getRegenSpeed() / 20f);
         }
     }
 
     @Unique
-    private void sol_valheim$applyFoodEffectsToPlayer(Player player,
-                                                      ValheimFoodData.EatenFoodItem eatenData,
-                                                      ModConfig.Common.FoodConfig config)
-    {
+    private void sol_valheim$applyFoodEffectsToPlayer(Player player, ValheimFoodData.EatenFoodItem eatenData, ModConfig.Common.FoodConfig config) {
         int ticksLeft = eatenData.ticksLeft;
-
         for (var effectCfg : config.extraEffects) {
             var mobEffect = effectCfg.getEffect();
-            if (mobEffect == null)
-                continue;
+            if (mobEffect == null) continue;
 
             int amplifier = Math.max(effectCfg.amplifier - 1, 0);
-            float fractionActive = effectCfg.duration;
             int totalTime = config.getTime();
-            int threshold = (int) (totalTime * fractionActive);
+            int threshold = (int) (totalTime * effectCfg.duration);
 
             if (ticksLeft >= (totalTime - threshold)) {
-                player.addEffect(
-                        new net.minecraft.world.effect.MobEffectInstance(
-                                mobEffect,
-                                120, // just so it doesn't flash
-                                amplifier,
-                                false,
-                                false
-                        )
-                );
-            }
-            else {
+                player.addEffect(new net.minecraft.world.effect.MobEffectInstance(mobEffect, 120, amplifier, false, false));
+            } else {
                 player.removeEffect(mobEffect);
             }
         }
@@ -186,13 +170,12 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
 
     @Inject(at = {@At("HEAD")}, method = {"hurt(Lnet/minecraft/world/damagesource/DamageSource;F)Z"}, cancellable = true)
     private void onDamage(DamageSource source, float amount, CallbackInfoReturnable<Boolean> info) {
-
         #if PRE_CURRENT_MC_1_19_2
         if (source == DamageSource.STARVE) {
         #elif POST_CURRENT_MC_1_20_1
-        if (source == this.damageSources().starve()) {
+        if (source.is(net.minecraft.world.damagesource.DamageTypes.STARVE)) {
         #endif
-            info.setReturnValue(Boolean.FALSE);
+            info.setReturnValue(false);
             info.cancel();
         }
     }
@@ -204,36 +187,25 @@ public abstract class PlayerEntityMixin extends LivingEntity implements PlayerEn
 
     @Inject(at = {@At("TAIL")}, method = {"readAdditionalSaveData(Lnet/minecraft/nbt/CompoundTag;)V"})
     private void onReadCustomData(CompoundTag nbt, CallbackInfo info) {
-        if (sol_valheim$food_data == null)
-            sol_valheim$food_data = new ValheimFoodData();
-
-        var foodData = ValheimFoodData.read(nbt.getCompound("sol_food_data"));
-        sol_valheim$food_data.MaxItemSlots = foodData.MaxItemSlots;
-        sol_valheim$food_data.DrinkSlot = foodData.DrinkSlot;
-        sol_valheim$food_data.ItemEntries = foodData.ItemEntries.stream()
-                .map(ValheimFoodData.EatenFoodItem::new)
-                .collect(Collectors.toCollection(ArrayList::new));
-
+        if (nbt.contains("sol_food_data")) {
+            this.sol_valheim$food_data = ValheimFoodData.read(nbt.getCompound("sol_food_data"));
+        }
         sol_valheim$trackData();
     }
 
     @Unique
     private void sol_valheim$trackData() {
-
-        #if PRE_CURRENT_MC_1_19_2
-        this.entityData.set(sol_valheim$DATA_ACCESSOR, sol_valheim$food_data);
-        #elif POST_CURRENT_MC_1_20_1
-        this.entityData.set(sol_valheim$DATA_ACCESSOR, sol_valheim$food_data, true);
-        #endif
-
-
+        if (this.entityData != null) {
+            #if PRE_CURRENT_MC_1_19_2
+            this.entityData.set(sol_valheim$DATA_ACCESSOR, sol_valheim$food_data);
+            #elif POST_CURRENT_MC_1_20_1
+            this.entityData.set(sol_valheim$DATA_ACCESSOR, sol_valheim$food_data, true);
+            #endif
+        }
     }
 
     @Inject(at = {@At("TAIL")}, method = {"defineSynchedData"})
     private void onInitDataTracker(CallbackInfo info) {
-        if (sol_valheim$food_data == null)
-            sol_valheim$food_data = new ValheimFoodData();
-
-        this.entityData.define(sol_valheim$DATA_ACCESSOR, sol_valheim$food_data);
+        this.entityData.define(sol_valheim$DATA_ACCESSOR, new ValheimFoodData());
     }
 }

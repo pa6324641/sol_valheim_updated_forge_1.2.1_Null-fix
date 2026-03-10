@@ -61,6 +61,20 @@ public class SOLValheim
 
 
 	public static void addTooltip(ItemStack item, TooltipFlag flag, List<Component> list){
+
+		if (item == null || item.isEmpty())
+			return;
+
+		if (!item.isEdible())
+			return;
+
+		if (getter == null)
+			return;
+
+		var foodProps = getter.get(item);
+		if (foodProps == null)
+			return;
+
 		var food = item.getItem();
 		if (food == Items.ROTTEN_FLESH) {
 			list.add(Component.literal("☠ Empties Your Stomach!").withStyle(ChatFormatting.GREEN));
@@ -71,36 +85,59 @@ public class SOLValheim
 		if (config == null)
 			return;
 
-		var hearts = config.getHearts() % 2 == 0 ? config.getHearts() / 2 : String.format("%.1f", (float) config.getHearts() / 2f);
-		list.add(Component.literal("❤ " + hearts + " Heart" + (config.getHearts() / 2f > 1 ? "s" : "")).withStyle(ChatFormatting.RED));
-		list.add(Component.literal("☀ " + String.format("%.1f", config.getHealthRegen()) + " Regen").withStyle(ChatFormatting.DARK_RED));
+		var hearts = config.getHearts() % 2 == 0
+				? config.getHearts() / 2
+				: String.format("%.1f", (float) config.getHearts() / 2f);
+
+		list.add(Component.literal("❤ " + hearts + " Heart" +
+				(config.getHearts() / 2f > 1 ? "s" : ""))
+				.withStyle(ChatFormatting.RED));
+
+		list.add(Component.literal("☀ " +
+				String.format("%.1f", config.getHealthRegen()) +
+				" Regen")
+				.withStyle(ChatFormatting.DARK_RED));
 
 		var minutes = (float) config.getTime() / (20 * 60);
 
-		list.add(Component.literal("⌚ " + String.format("%.0f", minutes)  + " Minute" + (minutes > 1 ? "s" : "")).withStyle(ChatFormatting.GOLD));
+		list.add(Component.literal("⌚ " +
+				String.format("%.0f", minutes) +
+				" Minute" +
+				(minutes > 1 ? "s" : ""))
+				.withStyle(ChatFormatting.GOLD));
 
 		if(!config.extraEffects.isEmpty() && Config.common.displayEffects) {
 			list.add(Component.literal(""));
+
 			for (var effect : config.extraEffects) {
 				var eff = effect.getEffect();
 				if (eff == null)
 					continue;
 
-				float effectDurationSeconds = config.getTime() * effect.duration / 20f;
+				float effectDurationSeconds =
+						config.getTime() * effect.duration / 20f;
+
 				int minutesPart = (int) (effectDurationSeconds / 60);
 				int secondsPart = (int) (effectDurationSeconds % 60);
 
-
 				if (eff.isBeneficial())
-					list.add(Component.literal("★ " + eff.getDisplayName().getString() + (effect.amplifier > 1 ? " " + effect.amplifier : "") +  String.format(" (%02d:%02d)", minutesPart, secondsPart)).withStyle(ChatFormatting.GREEN));
+					list.add(Component.literal("★ " +
+							eff.getDisplayName().getString() +
+							(effect.amplifier > 1 ? " " + effect.amplifier : "") +
+							String.format(" (%02d:%02d)", minutesPart, secondsPart))
+							.withStyle(ChatFormatting.GREEN));
 				else
-					list.add(Component.literal("❌ " + eff.getDisplayName().getString() + (effect.amplifier > 1 ? " " + effect.amplifier : "") + String.format(" (%02d:%02d)", minutesPart, secondsPart)).withStyle(ChatFormatting.DARK_RED));
+					list.add(Component.literal("❌ " +
+							eff.getDisplayName().getString() +
+							(effect.amplifier > 1 ? " " + effect.amplifier : "") +
+							String.format(" (%02d:%02d)", minutesPart, secondsPart))
+							.withStyle(ChatFormatting.DARK_RED));
 			}
 		}
 
 		if (item.getUseAnimation() == UseAnim.DRINK) {
-			list.add(Component.literal("❄ Refreshing!").withStyle(ChatFormatting.AQUA));
-
+			list.add(Component.literal("❄ Refreshing!")
+					.withStyle(ChatFormatting.AQUA));
 		}
 	}
 }

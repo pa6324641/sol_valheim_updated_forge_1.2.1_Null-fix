@@ -47,56 +47,51 @@ public class ValheimFoodData
     public EatenFoodItem DrinkSlot;
     public int MaxItemSlots = SOLValheim.Config.common.maxSlots;
 
-    public void eatItem(ItemStack food)
-    {
-        if (food.is(Items.ROTTEN_FLESH))
-            return;
+	public void eatItem(ItemStack food)	{
+		// 增加：防禦性檢查，如果物品真的空了，就不執行任何邏輯
+		if (food == null || food.isEmpty()) return;
 
-        var config = ModConfig.getFoodConfig(food);
-        if (config == null)
-            return;
+		if (food.is(Items.ROTTEN_FLESH))
+			return;
 
-        var isDrink = food.getUseAnimation() == UseAnim.DRINK;
-        if (isDrink) {
-            if (DrinkSlot != null && !DrinkSlot.canEatEarly())
-                return;
+		var config = ModConfig.getFoodConfig(food);
+		if (config == null)
+			return;
 
-            if (DrinkSlot == null)
-                DrinkSlot = new EatenFoodItem(food, config.getTime());
-            else {
-                DrinkSlot.ticksLeft = config.getTime();
-                DrinkSlot.item = food;
-            }
+		var isDrink = food.getUseAnimation() == UseAnim.DRINK;
+		if (isDrink) {
+			if (DrinkSlot != null && !DrinkSlot.canEatEarly())
+				return;
 
-            return;
-        }
+			// 確保建立一個新的副本，避免引用原始已歸零的 stack
+			DrinkSlot = new EatenFoodItem(food.copy(), config.getTime());
+			return;
+		}
 
-        var existing = getEatenFood(food);
-        if (existing != null)
-        {
-            if (!existing.canEatEarly())
-                return;
+		var existing = getEatenFood(food);
+		if (existing != null) {
+			if (!existing.canEatEarly()) return;
+			existing.ticksLeft = config.getTime();
+			existing.item = food.copy(); // 使用副本
+			return;
+		}
 
-            existing.ticksLeft = config.getTime();
-            return;
-        }
+		if (ItemEntries.size() < MaxItemSlots)
+		{
+			ItemEntries.add(new EatenFoodItem(food.copy(), config.getTime()));
+			return;
+		}
 
-        if (ItemEntries.size() < MaxItemSlots)
-        {
-            ItemEntries.add(new EatenFoodItem(food, config.getTime()));
-            return;
-        }
-
-        for (var item : ItemEntries)
-        {
-            if (item.canEatEarly())
-            {
-                item.ticksLeft = config.getTime();
-                item.item = food;
-                return;
-            }
-        }
-    }
+		for (var item : ItemEntries)
+		{
+			if (item.canEatEarly())
+			{
+				item.ticksLeft = config.getTime();
+				item.item = food.copy(); // 使用副本
+				return;
+			}
+		}
+	}
 
     public boolean canEat(ItemStack food)
     {
@@ -116,13 +111,12 @@ public class ValheimFoodData
         return ItemEntries.stream().anyMatch(EatenFoodItem::canEatEarly);
     }
 
-    public EatenFoodItem getEatenFood(ItemStack food) {
-        return ItemEntries.stream()
-                .filter((item) -> item.item == food)
-                .findFirst()
-                .orElse(null);
-    }
-
+	public EatenFoodItem getEatenFood(ItemStack food) {
+		return ItemEntries.stream()
+				.filter(item -> ItemStack.isSameItemSameTags(item.item, food))
+				.findFirst()
+				.orElse(null);
+	}
 
     public void clear()
     {
@@ -131,22 +125,18 @@ public class ValheimFoodData
     }
 
 
-    public void tick()
-    {
-        for (var item : ItemEntries)
-        {
-            item.ticksLeft--;
-        }
+	public void tick() {
+		// 確保 ticksLeft 不會減到負數，且移除 <= 0 的物件
+		ItemEntries.removeIf(item -> {
+			item.ticksLeft--;
+			return item.ticksLeft <= 0;
+		});
 
-        if (DrinkSlot != null) {
-            DrinkSlot.ticksLeft--;
-            if (DrinkSlot.ticksLeft <= 0)
-                DrinkSlot = null;
-        }
-
-        ItemEntries.removeIf(item -> item.ticksLeft <= 0);
-        ItemEntries.sort(Comparator.comparingInt(a -> a.ticksLeft));
-    }
+		if (DrinkSlot != null) {
+			DrinkSlot.ticksLeft--;
+			if (DrinkSlot.ticksLeft <= 0) DrinkSlot = null;
+		}
+	}
 
 
     public float getTotalFoodNutrition()
@@ -218,15 +208,15 @@ public class ValheimFoodData
             count++;
         }
 
-        if (DrinkSlot != null)
-        {
-            tag.putString("drink", DrinkSlot.item.getItem().arch$registryName().toString());
-            CompoundTag stackData = DrinkSlot.item.getTag();
-            if (stackData != null) {
-                tag.put("drinkData" + count, stackData);
-            }
-            tag.putInt("drinkticks", DrinkSlot.ticksLeft);
-        }
+		if (DrinkSlot != null)
+		{
+			tag.putString("drink", DrinkSlot.item.getItem().arch$registryName().toString());
+			CompoundTag stackData = DrinkSlot.item.getTag();
+			if (stackData != null) {
+				tag.put("drinkData", stackData); // 移除 + count，使用固定標籤
+			}
+			tag.putInt("drinkticks", DrinkSlot.ticksLeft);
+		}
 
         return tag;
     }
@@ -250,20 +240,17 @@ public class ValheimFoodData
             instance.ItemEntries.add(new EatenFoodItem(stack, ticks));
         }
 
-        var drink = tag.getString("drink");
         var drinkTicks = tag.getInt("drinkticks");
-
-        if (!drink.isBlank())
-        {
-            var item = SOLValheim.ITEMS.getRegistrar().get(new ResourceLocation(drink));
-            var stack = new ItemStack(item, 1);
-
-            if (tag.contains("drinkData")) {
-                var data = tag.getCompound("drinkData");
-                stack.setTag(data);
-            }
-            instance.DrinkSlot = new EatenFoodItem(stack, drinkTicks);
-        }
+		var drink = tag.getString("drink");
+		if (!drink.isBlank())
+		{
+			var item = SOLValheim.ITEMS.getRegistrar().get(new ResourceLocation(drink));
+			var stack = new ItemStack(item, 1);
+			if (tag.contains("drinkData")) { // 名稱需與 save 一致
+				stack.setTag(tag.getCompound("drinkData"));
+			}
+			instance.DrinkSlot = new EatenFoodItem(stack, tag.getInt("drinkticks"));
+		}
 
         return instance;
     }
@@ -284,16 +271,19 @@ public class ValheimFoodData
             return ((float) this.ticksLeft / config.getTime()) < SOLValheim.Config.common.eatAgainPercentage;
         }
 
-        public EatenFoodItem(ItemStack item, int ticksLeft)
-        {
-            this.item = item;
-            this.ticksLeft = ticksLeft;
-        }
+		public EatenFoodItem(ItemStack item, int ticksLeft)
+		{
+			this.item = item.copy();
+			this.item.setCount(1); // 強制數量為 1，防止變為空物品
+			this.ticksLeft = ticksLeft;
+		}
 
-        public EatenFoodItem(EatenFoodItem eaten)
-        {
-            this.item = eaten.item;
-            this.ticksLeft = eaten.ticksLeft;
-        }
+		public EatenFoodItem(EatenFoodItem eaten)
+		{
+			// 必須也使用 copy 並確保數量
+			this.item = eaten.item.copy();
+			this.item.setCount(1);
+			this.ticksLeft = eaten.ticksLeft;
+		}
     }
 }

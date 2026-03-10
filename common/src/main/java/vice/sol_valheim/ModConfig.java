@@ -24,60 +24,76 @@ import java.util.*;
 @Config(name = SOLValheim.MOD_ID)
 @Config.Gui.Background("minecraft:textures/block/stone.png")
 public class ModConfig extends PartitioningSerializer.GlobalData {
-    public static Common.FoodConfig getFoodConfig(ItemStack stack) {
-        var item = stack.getItem();
-        var isDrink = item.getDefaultInstance().getUseAnimation() == UseAnim.DRINK;
-        if(item != Items.CAKE && !item.isEdible() && !isDrink)
-            return null;
+	public static Common.FoodConfig getFoodConfig(ItemStack stack) {
+    // --- 關鍵修改 1：即使 stack 數量為 0 (isEmpty)，只要它不是 AIR 且有 Item 物件，就應該繼續執行 ---
+    if (stack == null) return null;
+    var item = stack.getItem();
+    if (item == Items.AIR) return null; 
 
-        var existing = SOLValheim.Config.common.foodConfigs.get(item.arch$registryName().toString());
-        if (existing == null)
-        {
-            var registry = item.arch$registryName().toString();
+    // 原本你可能有用 stack.isEdible()，但在最後一個食物被吃掉時，
+    // 部分版本的 stack.isEdible() 可能會因為數量為 0 而判斷失敗。
+    // 建議改用 item 級別的判斷：
+    var isDrink = item.getDefaultInstance().getUseAnimation() == UseAnim.DRINK;
+    
+    // 判斷是否為可進食/飲用物品
+    if (item != Items.CAKE && !item.isEdible() && !isDrink)
+        return null;
 
-            var food = item == Items.CAKE
-                    ? new FoodProperties.Builder().nutrition(10).saturationMod(0.7f).build()
-                    : SOLValheim.getter.get(stack);
+    var existing = SOLValheim.Config.common.foodConfigs.get(item.arch$registryName().toString());
+    if (existing == null) {
+        var registry = item.arch$registryName().toString();
 
-            if (isDrink) {
-                if (registry.contains("potion")) {
-                    food = new FoodProperties.Builder().nutrition(4).saturationMod(0.75f).build();
-                }
-                else if (registry.contains("milk")) {
-                    food = new FoodProperties.Builder().nutrition(6).saturationMod(1f).build();
-                }
-                else {
-                    food = new FoodProperties.Builder().nutrition(2).saturationMod(0.5f).build();
-                }
+        // --- 關鍵修改 2：獲取 FoodProperties 時，如果 stack 已經 empty，使用 item.getDefaultInstance() ---
+        // 這樣可以確保即便手上那個 stack 消失了，我們還能拿到該物品的原始屬性
+        ItemStack referenceStack = stack.isEmpty() ? item.getDefaultInstance() : stack;
+
+        var food = item == Items.CAKE
+                ? new FoodProperties.Builder().nutrition(10).saturationMod(0.7f).build()
+                : SOLValheim.getter.get(referenceStack);
+
+        // 如果 getter 沒抓到，給個保底，避免後續 NullPointerException
+        if (food == null) {
+            food = new FoodProperties.Builder().nutrition(2).saturationMod(0.1f).build();
+        }
+
+        if (isDrink) {
+            if (registry.contains("potion")) {
+                food = new FoodProperties.Builder().nutrition(4).saturationMod(0.75f).build();
             }
-
-            existing = new Common.FoodConfig();
-            existing.nutrition = food.getNutrition();
-            existing.healthRegenModifier = 1f;
-            existing.saturationModifier = food.getSaturationModifier();
-
-            if (registry.startsWith("farmers"))
-            {
-                existing.nutrition = (int) ((existing.nutrition * 1.25));
-                existing.saturationModifier = existing.saturationModifier * 1.10f;
-                existing.healthRegenModifier = 1.25f;
+            else if (registry.contains("milk")) {
+                food = new FoodProperties.Builder().nutrition(6).saturationMod(1f).build();
             }
-
-            if (registry.equals("minecraft:golden_apple") || registry.equals("minecraft:enchanted_golden_apple")) {
-                existing.nutrition = 10;
-                existing.healthRegenModifier = 1.5f;
-            }
-
-            if (registry.equals("minecraft:beetroot_soup")) {
-                var effectConfig = new Common.MobEffectConfig();
-                effectConfig.ID = BuiltInRegistries.MOB_EFFECT.getKey(MobEffects.MOVEMENT_SPEED).toString();
-                existing.extraEffects.add(effectConfig);
+            else {
+                food = new FoodProperties.Builder().nutrition(2).saturationMod(0.5f).build();
             }
         }
 
-        return existing;
+        existing = new Common.FoodConfig();
+        existing.nutrition = food.getNutrition();
+        existing.healthRegenModifier = 1f;
+        existing.saturationModifier = food.getSaturationModifier();
+
+        // ...（後續的 farmers delight 或金蘋果判斷邏輯保持不變）...
+        if (registry.startsWith("farmers")) {
+            existing.nutrition = (int) ((existing.nutrition * 1.25));
+            existing.saturationModifier = existing.saturationModifier * 1.10f;
+            existing.healthRegenModifier = 1.25f;
+        }
+
+        if (registry.equals("minecraft:golden_apple") || registry.equals("minecraft:enchanted_golden_apple")) {
+            existing.nutrition = 10;
+            existing.healthRegenModifier = 1.5f;
+        }
+
+        if (registry.equals("minecraft:beetroot_soup")) {
+            var effectConfig = new Common.MobEffectConfig();
+            effectConfig.ID = BuiltInRegistries.MOB_EFFECT.getKey(MobEffects.MOVEMENT_SPEED).toString();
+            existing.extraEffects.add(effectConfig);
+        }
     }
 
+    return existing;
+}
 
     @ConfigEntry.Category("common")
     @ConfigEntry.Gui.TransitiveObject()
